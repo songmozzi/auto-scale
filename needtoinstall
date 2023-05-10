@@ -1,0 +1,106 @@
+## Metrics-server
+pod의 metric 수집을 위해 metrics-server설치
+metric server 설치
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+##설치 확인
+kubectl get deployment metrics-server -n kube-system
+
+
+## Cluster auto-scaler
+Cluster Auto-scaler는 AWS와 함께 동작하여 노드의 개수를 조절할 수 있다.
+cluster-autoscaler-policy.json 생성 (경우에 따라 생략 가능)
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "autoscaling:SetDesiredCapacity",
+                "autoscaling:TerminateInstanceInAutoScalingGroup"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/k8s.io/cluster-autoscaler/my-cluster": "owned"    ##my-cluster를 생성한 eks cluster로 변
+                }
+            }
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "autoscaling:DescribeAutoScalingInstances",
+                "autoscaling:DescribeAutoScalingGroups",
+                "ec2:DescribeLaunchTemplateVersions",
+                "autoscaling:DescribeTags",
+                "autoscaling:DescribeLaunchConfigurations",
+                "ec2:DescribeInstanceTypes"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+
+##위의 iam 정책 생성 명령어 실행
+aws iam create-policy \
+    --policy-name AmazonEKSClusterAutoscalerPolicy \
+    --policy-document file://cluster-autoscaler-policy.json
+
+
+##iam 역할 생성 및 연결
+## 클러스터 이름과 계정 id를 변경하여 적용한다
+eksctl create iamserviceaccount \
+  --cluster=**my-cluster** \
+  --namespace=kube-system \
+  --name=cluster-autoscaler \
+  --attach-policy-arn=arn:aws:iam::**111122223333**:policy/AmazonEKSClusterAutoscalerPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+```
+
+##yaml 파일 다운로드
+curl -O https://raw.githubusercontent.com/kubernetes/autoscaler/master/cluster-autoscaler/cloudprovider/aws/examples/cluster-autoscaler-autodiscover.yaml
+
+
+##yaml 파일 수정 (클러스터 네임)
+##클러스터에 배포
+kubectl apply -f cluster-autoscaler-autodiscover.yaml
+
+
+##주석 지정
+kubectl annotate serviceaccount cluster-autoscaler \
+  -n kube-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::ACCOUNT_ID:role/AmazonEKSClusterAutoscalerRole
+
+
+##패치 명령어로 수정
+kubectl patch deployment cluster-autoscaler \
+  -n kube-system \
+  -p '{"spec":{"template":{"metadata":{"annotations":{"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"}}}}}'
+
+
+##배포 후 edit으로 편집
+kubectl -n kube-system edit deployment.apps/cluster-autoscaler
+
+spec:
+      containers:
+      - command
+        - ./cluster-autoscaler
+        - --v=4
+        - --stderrthreshold=info
+        - --cloud-provider=aws
+        - --skip-nodes-with-local-storage=false
+        - --expander=least-waste
+        - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/my-cluster
+        - --balance-similar-node-groups
+        - --skip-nodes-with-system-pods=false
+
+
+##이미지 태그 수정, 고유한 값으로 변경
+##클러스터와 일치하는 버전을 찾아 수정한다
+kubectl set image deployment cluster-autoscaler \
+  -n kube-system \
+  cluster-autoscaler=registry.k8s.io/autoscaling/cluster-autoscaler:v1.24.n
