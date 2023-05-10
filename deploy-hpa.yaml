@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: project-deploy-fe
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  replicas: 5
+  selector:
+    matchLabels:
+      tier: aws-fe
+  template:
+    metadata:
+      name: front-end
+      labels:
+        tier: aws-fe
+    spec:
+      containers:
+        - name: aws-fe-container
+          image: jeongjaeha/5inque:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          env:
+          - name: VUE_APP_WAS
+            valueFrom:
+              configMapKeyRef:
+                name: cm
+                key: VUE_APP_WAS
+          resources:
+           limits:
+             cpu: "1"
+             memory: "1Gi"
+           requests:
+             cpu: "0.2"
+             memory: "128Mi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: project-hpa-fe
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: project-deploy-fe
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60
